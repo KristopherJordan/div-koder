@@ -1,0 +1,123 @@
+#########################################################################################
+#### REPLICATION OF "Predicting Conflict in Space and Time" by ##########################
+#### Nils B. Weidmann and Michael D. Ward, then using Random Forest on same data ########
+#########################################################################################
+
+# Set working directory
+setwd("/Users/kristopher/Desktop/Kristopher/PredictinPoliticalScience/PredictingConflictSpaceandTime")
+
+#### Import data ####
+data <- read.table("bosnia_replication.txt", header=T)
+
+####lag conflict: ####
+library(dplyr)
+#One year lag
+data  <- 
+  data %>%
+  group_by(MUNID) %>%
+  mutate(CONFLICTt1 = lag(CONFLICT, 1))
+#Two years lag
+data  <- 
+  data %>%
+  group_by(MUNID) %>%
+  mutate(CONFLICTt2 = lag(CONFLICT, 2))
+#If conflict lagged is NA == 0
+data1 <- na.omit(data) # Remove rows with >0 missing
+data$CONFLICTt1[is.na(data$CONFLICTt1)] <- 0 # NA == 0
+data$CONFLICTt2[is.na(data$CONFLICTt2)] <- 0 # NA == 0
+
+#Model 1, binomial regression, replikation Table 1 baseline model, p.889
+model1 <- glm(CONFLICT ~ TOTPOP91 + ELF91 + BORDER + terrmean + CONFLICTt1 + 
+                CONFLICTt2, data=data1, family=binomial)
+summary(model1)
+#Model1, b binomial regression, replikation Table 1 baseline model,
+#NOT deleted missing values in conflict. Better fit.
+model2 <- glm(CONFLICT ~ TOTPOP91 + ELF91 + BORDER + terrmean + CONFLICTt1 + 
+                CONFLICTt2, data=data, family=binomial)
+summary(model2)
+
+#### PLOTTING RESULTS FROM TABLE 1 ####
+#Predikert vs. observert Y.
+model1plot <- cbind(model1$fitted.values,model1$y)
+plot(model1plot, main = "Predikert vs observert Y", 
+     xlab = "Predikerte verdier", ylab = "Observert Y")
+
+########################################################################################
+#### Plotting predictors ####
+library(ggplot2)
+
+#### Total population
+# on CONFLICT
+qplot(TOTPOP91,CONFLICT,data=data)
+# on terrmean
+qq1 <- qplot(TOTPOP91,terrmean,colour=CONFLICT,data=data) # negativ trend
+qq1 + geom_smooth(method="lm",formula=y~x)
+glm(terrmean~TOTPOP91,data=data)
+# on ELF91
+qq2 <- qplot(TOTPOP91,ELF91,colour=CONFLICT,data=data)
+qq2 + geom_smooth(method="lm",formula=y~x) # noe positiv trend
+glm(TOTPOP91~ELF91,data=data)
+# on BORDER
+qplot(TOTPOP91,BORDER,colour=CONFLICT,data=data) #bare konflikter i ikke-naboer.. 
+# on CONFLICT lagged with 1 year
+qplot(TOTPOP91,CONFLICTt1,colour=CONFLICT,data=data) 
+
+#### terrmean
+# on CONFLICT
+qplot(terrmean,CONFLICT,data=data)
+# on ELF91
+qq3 <- qplot(terrmean,ELF91,colour=CONFLICT,data=data)
+qq3 + geom_smooth(method="lm",formula=y~x) # noe positiv trend
+# on BORDER
+qplot(terrmean,BORDER,colour=CONFLICT,data=data) 
+
+########################################################################################
+# Etter å ha sett på dataene så virker det som om det er for få konflikter og ikke 
+# en tydelig kausal sammenheng til å gjøre  gode prediksjoner, men prøver alikevel..
+########################################################################################
+#### RANDOM FOREST ####
+library(caret);library(kernlab)
+# Split into training and testing dataset. 75% in training, by random.
+inTrain <- createDataPartition(y=data$CONFLICT,p=0.75,list=F)
+training <- data[inTrain,]
+testing <- data[-inTrain,]
+
+##### Building the model ####
+#Import package
+library(randomForest)
+# Set a random seed
+set.seed(1337)
+# Build the model
+modelFit <- randomForest(factor(CONFLICT) ~TOTPOP91 + ELF91 + BORDER + 
+                           terrmean + CONFLICTt1 + CONFLICTt2,
+                         data=training)
+#plot results
+plot(modelFit)
+legend('topright', colnames(modelFit$err.rate), col=1:3, fill=1:3)
+# We see that the model predicts "no conflict" better than "conflict". Which variables are most important?
+
+#### Variable importance ####
+# Get importance
+importance    <- importance(modelFit)
+varImportance <- data.frame(Variables = row.names(importance), 
+                            Importance = round(importance[ ,'MeanDecreaseGini'],2))
+# Create a rank variable based on importance
+rankImportance <- varImportance %>%
+  mutate(Rank = paste0('#',dense_rank(desc(Importance))))
+# Use ggplot2 to plot the importance of variables
+ggplot(rankImportance, aes(x = reorder(Variables, Importance), 
+                           y = Importance, fill = Importance)) +
+  geom_bar(stat='identity') + 
+  geom_text(aes(x = Variables, y = 0.5, label = Rank),
+            hjust=0, vjust=0.55, size = 4, colour = 'red') +
+  labs(x = 'Variables') +
+  coord_flip() + 
+  theme_bw()
+
+#### Prediction on test dataset ####
+prediction <- predict(modelFit, testing)
+# Export solution to a dataframe with two columns: MUNID (id variable) and predicted conflict
+solution <- data.frame(ID = testing$MUNID, Conflict = prediction)
+
+# konklusjon: for få konflikter og for lite mønster i dataen til at modellen klarer å predikere presist..
+
