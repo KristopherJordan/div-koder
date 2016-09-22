@@ -1,0 +1,1200 @@
+###########################################################################################
+############## REPLICATION CODE   #########################################################
+############## KRISTOPHER JORDAN  #########################################################
+############## MASTER THESIS      #########################################################
+############## SPRING 2016        #########################################################
+############## 23th May 2016      #########################################################
+###########################################################################################
+
+
+## PART 1 #################################################################################
+############## THE DATASET ################################################################
+###########################################################################################
+##########################################################################################
+############## Import Archigos version 4 #################################################
+library(foreign)
+setwd("/Users/kristopher/Desktop/MasterUiO/Masteroppgave/Datasett/Replication")
+Archigos4 <- read.csv("Archigos4.csv", header=TRUE, sep=";")
+
+#### START AND END DATE ####
+Archigos4$startdate <- as.Date( as.character(Archigos4$startdate), format="%Y-%m-%d")
+Archigos4$enddate <- as.Date( as.character(Archigos4$enddate), format="%Y-%m-%d")
+#Archigos4$yearstart variable: referring to start year in power for political leaders
+Archigos4$yearstart <- format(Archigos4$startdate, "%Y")
+Archigos4$yearstart <- as.numeric(Archigos4$yearstart)
+#Archigos4$yearend variable: referring to end year in power for political leaders
+Archigos4$yearend <- format(Archigos4$enddate, "%Y")
+Archigos4$yearend <- as.numeric(Archigos4$yearend)
+
+########################################################################################
+#### Repeat rows equivalent to number of years in power ################################
+#### TO country-year format ############################################################
+Archigos4$years2 <- Archigos4$yearend - Archigos4$yearstart
+# Keep observation if duration < 1 year #
+Archigos4$years3 <- ifelse(Archigos4$years2==0,1,Archigos4$years2) 
+#### Repeat rows ####
+library(mefa)
+replicationdata <- rep(Archigos4,times=Archigos4$years3) #N=14900
+detach("package:mefa", unload=TRUE)
+
+#########################################################################################
+#Truncate leaders who lost office before 01-01-1946
+for (i in 1:nrow(replicationdata)) 
+{if(replicationdata$startdate[i]> "1946-01-01")  {replicationdata$trunc[i]<- 1} 
+  else if(replicationdata$startdate[i]< "1946-01-01")   {replicationdata$trunc[i]<- 0} }
+replicationdata <- subset(replicationdata, trunc==1) # 9465 observations
+
+#### ID NUMBER TO LEADERS ####
+library(plyr)
+replicationdata$id <- id(replicationdata[c("leadid")])
+detach("package:plyr", unload=TRUE)
+
+#### MAKE YEAR VARIABLE ####
+dt <- replicationdata
+library(data.table)
+dt <- data.table(dt)
+dt[ , AccTenure := 1:.N , by = c("obsid" , "yearstart") ]
+dt$year <- (dt$yearstart+dt$AccTenure)
+replicationdata <- data.frame(dt)
+
+#New variable Archigos4$years: Counts years in power, based on $enddate og $startdate
+replicationdata$years <- as.Date(as.character(replicationdata$enddate), 
+                                 format="%Y-%m-%d")-as.Date(as.character(replicationdata$startdate), 
+                                                            format="%Y-%m-%d")
+replicationdata$years <- replicationdata$years / (365.25)
+replicationdata$years <- as.numeric(replicationdata$years)
+
+#### ACCUMULATED TENURE == VARIABLE DURATION ####
+replicationdata$Duration <- replicationdata$years - (replicationdata$yearend-
+                                                       replicationdata$year)
+replicationdata$Duration <- ifelse(replicationdata$years<1,replicationdata$years,
+                                   replicationdata$Duration) #Strange error if not done..
+
+########################################################################################
+#### Define year of entry and exit for leaders ####
+########################################################################################
+# ENTRY YEAR, 1=ENTER
+for (i in 1:nrow(replicationdata)) 
+{if(replicationdata$yearstart[i]+1 == replicationdata$year[i]) 
+{replicationdata$enter[i]<- 1}
+  else if(replicationdata$yearstart[i]+1 != replicationdata$year[i])
+  {replicationdata$enter[i]<- 0} }
+
+# EXIT YEAR, 1 = EXIT
+for (i in 1:nrow(replicationdata)) 
+{if(replicationdata$yearend[i] == replicationdata$year [i]) 
+{replicationdata$leave[i]<- 1} 
+  else if(replicationdata$yearend[i] != replicationdata$year[i])
+  {replicationdata$leave[i]<- 0} }
+#### FIX FOR THOSE LEADERS WHOSE DURATION<1 year
+replicationdata$leave <- ifelse(replicationdata$yearstart==replicationdata$yearend,
+                                replicationdata$leave+1,replicationdata$leave)
+
+#### TIME1 and TIME2 variables, Time-varying covariates start stop time for each row #####
+##########################################################################################
+#### INTERVALL TIME START END #### TIME1 and TIME2. Start year = 0
+####  TME 1 and TIME 2 Variables
+replicationdata$Time2 <- replicationdata$year - replicationdata$yearstart
+replicationdata$Time2 <- ifelse(replicationdata$year == replicationdata$yearstart+1,
+                                replicationdata$Duration,replicationdata$Time2)
+library(dplyr)
+replicationdata  <- 
+  replicationdata %>%
+  group_by(obsid) %>%
+  mutate(Time1 = lag(Time2, 1))
+replicationdata$Time1[is.na(replicationdata$Time1)] <- 0
+replicationdata$Time2 <- ifelse(replicationdata$year == replicationdata$yearend,
+                                replicationdata$Duration,replicationdata$Time2 )
+replicationdata$Time2 <- ifelse(replicationdata$Time2==0,0.00001,replicationdata$Time2)
+replicationdata$Time1 <- round(replicationdata$Time1,digits=5)
+replicationdata$Time2 <- round(replicationdata$Time2,digits=5)
+replicationdata$Time1 <- ifelse(replicationdata$Time1==replicationdata$Time2,
+                                -0.00001,replicationdata$Time1)
+
+##########################################################################################
+#Define gender, to a dichotomous variable #1=FEMALE;2=MALE
+replicationdata$gender <- factor(replicationdata$gender, labels=c("Female","Male")) 
+#ccode
+replicationdata$ccode <- as.numeric(replicationdata$ccode)
+#prevtimesinoffice
+replicationdata$prevtimesinoffice <- ifelse(replicationdata$prevtimesinoffice>0,1,0)
+replicationdata$prevtimesinoffice <- as.factor(replicationdata$prevtimesinoffice)
+#yrborn
+replicationdata$yrborn <- as.numeric(replicationdata$yrborn)
+#num.entry
+replicationdata$num.entry <- as.numeric(replicationdata$num.entry)
+replicationdata$IrregularEntry <- ifelse(replicationdata$entry=="Irregular",1,0)
+replicationdata$IrregularEntry <- as.factor(replicationdata$IrregularEntry)
+#yearstart
+replicationdata$yearstart <- as.numeric(replicationdata$yearstart)
+#yearend
+replicationdata$yearend <- as.numeric(replicationdata$yearend)
+
+#### IF LEADERS DURATION < 1 year, year=startyear ####
+replicationdata$year <- ifelse(replicationdata$yearstart==replicationdata$yearend,
+                               replicationdata$year-1,replicationdata$year)
+replicationdata$Duration <- ifelse(replicationdata$years<1 & replicationdata$years2==0,
+                                   replicationdata$years, replicationdata$Duration)
+
+########################################################################################
+########################################################################################
+#### SUBSET IMPORTANT VARIABLES FROM DATSET  ###########################################
+########################################################################################
+replicationdata <- subset(replicationdata, select = c(ccode, year, leader, obsid, id,
+                                                      idacr, startdate, enddate, Duration,
+                                                      Time1,Time2,
+                                                      entry, exit, exitcode, enter,leave,
+                                                      prevtimesinoffice, posttenurefate,
+                                                      gender, yrborn, yrdied, num.entry, 
+                                                      IrregularEntry,
+                                                      num.exitcode,num.posttenurefate,
+                                                      years,yearstart, yearend,
+                                                      num.exit))
+
+##########################################################################################
+########### Import POLITYIV  dataset #####################################################
+########################################################################################
+#setwd("/Users/kristopher/Desktop/MasterUiO/Masteroppgave/Datasett/PolityIV")
+polity2 <- read.csv("p4v2014.csv", header=TRUE, sep=";")
+polity2 <- subset(polity2,  select = c(ccode, year, country, scode, polity2,polity, xrreg,
+                                       xrcomp, xropen, parcomp, 
+                                       xconst, parreg, exrec,
+                                       exconst, polcomp))
+
+#MERGE Dataset with POLITY-IV #### N=9469
+replicationdata <- merge(replicationdata, polity2, by=(c("ccode", "year")), all.x=TRUE)
+
+########################################################################################
+#### IMPORT UCDP/PRIO DATASET ON ARMED CONFLICTS########################################
+########################################################################################
+ACD <- read.csv("124920_1ucdpprio-armed-conflict-dataset-v.4-2015.csv", 
+                header=TRUE, sep=";" )
+
+#Convert country names in ACD to CowCode ccode and year
+ACD$ccode <- ACD$GWNoA
+ACD$year <- ACD$Year
+ACD$YearACD <- ACD$Year
+ACD$ConflictId <- as.numeric(ACD$ConflictId)
+#Recode to date variable in ACD: $StartDate ; $StartDate2
+ACD$StartDate2 <- as.Date( as.character(ACD$StartDate2), format="%Y-%m-%d")
+
+ACD <- subset(ACD, select= c(year, ccode, YearACD, ConflictId, SideA,SideB,
+                             IntensityLevel, CumulativeIntensity, 
+                             TypeOfConflict, StartDate2))
+#### MAKE ID VARIABLE on ACD ####
+library(plyr)
+ACD$id <- id(ACD[c("year","ccode","ConflictId")])
+detach("package:plyr", unload=TRUE)
+
+
+########################################################################################
+#### COLLAPSE DATA on ACD, ONE LINE EACH YEAR ##########################################
+# FROM: http://www.ats.ucla.edu/stat/r/faq/collapse.htm ################################
+########################################################################################
+library(doBy)
+ACDCollapse <- summaryBy(IntensityLevel+id~ccode+year,
+                         keep.names=T,FUN=c(max),data=ACD) #N=1548
+detach("package:doBy", unload=TRUE)
+#### MERGE ACD and ACDCollapse, 
+ACDCollapse2 <- subset(ACDCollapse, select=c(id))
+ACD2 <- merge(ACDCollapse2,ACD, by=c("id"),all.x=T)
+ACD2 <- subset(ACD2,select=-c(id))
+
+########################################################################################
+####Merge ACD with replicationdata####
+replicationdata <- merge(replicationdata, ACD2, by=c("ccode", "year"), all.x=TRUE)
+
+#Type of conflict = 0, if no conflict, instead of NA
+replicationdata$IntensityLevel <- as.numeric(replicationdata$IntensityLevel)
+replicationdata$IntensityLevel[is.na(replicationdata$IntensityLevel)] <- 0
+replicationdata$IntensityLevel1 <- ifelse(replicationdata$IntensityLevel==1,1,0)
+replicationdata$IntensityLevel2 <- ifelse(replicationdata$IntensityLevel==2,1,0)
+replicationdata$TypeOfConflict[is.na(replicationdata$TypeOfConflict)] <- 0
+replicationdata$TypeOfConflict <- as.factor(replicationdata$TypeOfConflict)
+
+########################################################################################
+#### IMPORT BANKS DATASET ##############################################################
+########################################################################################
+Banksdata <- read.csv("Banksdata.csv", header=TRUE, sep=";")
+
+#Exclude unimportant variables from Banksdata
+Banksdata <- subset(Banksdata, select=c(ccode, year,country, economics2,
+                                        economics3, pop1,
+                                        legis02, legis03, polit02,
+                                        polit03,polit04, polit05, polit06, polit07,
+                                        polit08, polit09, revexp4, 
+                                        domestic2))
+
+#### IMPORT DOLLAR EXACHANGE RATES, FROM http://www.bls.gov/cpi/cpifact8.htm ##########
+DollarXange <- read.csv("DollarExange.csv", header=T, sep=";")
+####MERGE replicationdataset and Banksdata####
+replicationdata <- merge(replicationdata, Banksdata, by=c("ccode","year"), all.x=TRUE)
+
+#########################################################################################
+#########################################################################################
+#### IMOPRT WORLD BANK GDP PER CAPITA ###################################################
+#########################################################################################
+WBGDPpc <- read.csv("WBgdp.csv",header=T, sep=";")
+#### SUBSET CCODE, YEAR and GDP
+WBGDPpc$GDPwb <-WBGDPpc$GDP
+WBGDPpc <- subset(WBGDPpc, select=c("ccode", "year", "GDPwb","Country.Name","Country.Code"))
+BANKSGDP <- subset(Banksdata, select=c("ccode","year","economics3","country"))
+
+#### MERGE WITH BANKS ECONOMIC3 ####
+GDPpc <- merge(BANKSGDP,WBGDPpc, by=c("ccode", "year"),all=T)
+GDPpc <- merge(GDPpc,DollarXange, by="year",all=T)
+GDPpc$GDPwb2015 <- GDPpc$GDPwb*GDPpc$Dollar2015
+GDPpc$BanksGDP2015 <- GDPpc$economics3*GDPpc$Dollar2015
+####  MISSING = The other GDP value, AND then COMPUTE MEAN ####
+GDPpc$test <- ifelse(is.na(GDPpc$BanksGDP2015),GDPpc$GDPwb2015,GDPpc$BanksGDP2015)
+GDPpc$test2 <- ifelse(is.na(GDPpc$GDPwb2015),GDPpc$BanksGDP2015,GDPpc$GDPwb2015)
+GDPpc$test3 <- (GDPpc$test+GDPpc$test2)/2
+GDPpc$GDPpc <- GDPpc$test3
+#SUBSET GDPpc VARIABLE
+GDPpc <- subset(GDPpc,select=c("ccode","year","GDPpc","Dollar2015","GDPwb2015","BanksGDP2015"))
+#### MERGE GDPpc with dataset ####
+replicationdata <- merge(replicationdata, GDPpc, by=c("ccode","year"),all.x=T) 
+
+########################################################################################
+#### VARIABLE: PERCENTAGE ECONOMIC GROWTH ##############################################
+########################################################################################
+library(dplyr)
+replicationdata  <- 
+  replicationdata %>%
+  group_by(ccode) %>%
+  mutate(GDPpclag = lag(GDPpc, 1))
+
+replicationdata$ecogrowth <- 
+  (replicationdata$GDPpc-replicationdata$GDPpclag)/replicationdata$GDPpclag
+replicationdata$ecogrowth <- replicationdata$ecogrowth*10
+
+########################################################################################
+#### Standaridize GDPpc ################################################################
+########################################################################################
+replicationdata$GDPpcST <- scale(replicationdata$GDPpc)
+
+########################################################################################
+#### VARIABLE: Standardize population size #############################################
+########################################################################################
+replicationdata$pop1ST <- scale(replicationdata$pop1)
+
+########################################################################################
+# Accumulated time left for political leaders in office
+replicationdata$tenureleft <- replicationdata$yearend - replicationdata$year
+
+########################################################################################
+#### VARIABLE: AGE #####################################################################
+########################################################################################
+#### Start age and end age ####
+replicationdata$startage <- replicationdata$yearstart-replicationdata$yrborn
+replicationdata$endage <- replicationdata$yearend-replicationdata$yrborn
+#### Accumulated age ####
+replicationdata$age <- replicationdata$endage - replicationdata$tenureleft
+
+########################################################################################
+#### VARIABLE: TAXATION ################################################################
+########################################################################################
+replicationdata$taxation1 <- (replicationdata$revexp4*0.01)
+replicationdata$taxation1 <- replicationdata$taxation1*replicationdata$Dollar2015
+replicationdata$taxation <- replicationdata$taxation1/replicationdata$GDPpc
+replicationdata$taxation <- replicationdata$taxation*10
+
+########################################################################################
+#### TypeOfConflict to 4 variables #####################################################
+########################################################################################
+replicationdata$NoConflict <- ifelse(replicationdata$TypeOfConflict==0,1,0)
+replicationdata$ExtrasystemicConflict <- ifelse(replicationdata$TypeOfConflict==1,1,NA)
+replicationdata$InterstateConflict <- ifelse(replicationdata$TypeOfConflict==2,1,NA)
+replicationdata$InternalConflict <- ifelse(replicationdata$TypeOfConflict==3,1,NA)
+replicationdata$InternationalizedConflict <- ifelse(replicationdata$TypeOfConflict==4,1,NA)
+#
+replicationdata$TypeOfConflictEx <- ifelse(replicationdata$TypeOfConflict==1,1,0)
+replicationdata$TypeOfConflictstate <- ifelse(replicationdata$TypeOfConflict==2,1,0)
+replicationdata$TypeOfConflictinternal <- ifelse(replicationdata$TypeOfConflict==3,1,0)
+replicationdata$TypeOfConflictinternationalized <- ifelse(replicationdata$TypeOfConflict==4,1,0)
+
+#### Group Conflicts to leaders ####
+library(zoo)
+#### ExtrasystemicConflict ####
+replicationdata$ExtrasystemicConflict <- na.aggregate(
+  replicationdata$ExtrasystemicConflict,by=replicationdata$id)
+replicationdata$ExtrasystemicConflict[is.na(
+  replicationdata$ExtrasystemicConflict)] <- 0
+#### ExtrasystemicConflict ####
+replicationdata$InterstateConflict <- na.aggregate(
+  replicationdata$InterstateConflict,by=replicationdata$id)
+replicationdata$InterstateConflict[is.na(
+  replicationdata$InterstateConflict)] <- 0
+#### InternalConflict ####
+replicationdata$InternalConflict <- na.aggregate(
+  replicationdata$InternalConflict,by=replicationdata$id)
+replicationdata$InternalConflict[is.na(
+  replicationdata$InternalConflict)] <- 0
+#### InternationalizedConflict #### 
+replicationdata$InternationalizedConflict <- na.aggregate(
+  replicationdata$InternationalizedConflict,by=replicationdata$id)
+replicationdata$InternationalizedConflict[is.na(
+  replicationdata$InternationalizedConflict)] <- 0
+#### START DATE ####
+replicationdata$StartDate2 <- na.aggregate(
+  replicationdata$StartDate2,by=replicationdata$id)
+detach("package:zoo", unload=TRUE)
+
+#### CONFLICT INTO A FACTOR VARIABLE
+replicationdata$Conflict <- ifelse(replicationdata$NoConflict==1,0,0)
+replicationdata$Conflict <- ifelse(replicationdata$ExtrasystemicConflict==1,1,
+                                   replicationdata$Conflict)
+replicationdata$Conflict <- ifelse(replicationdata$InterstateConflict==1,2,
+                                   replicationdata$Conflict)
+replicationdata$Conflict <- ifelse(replicationdata$InternalConflict==1,3,
+                                   replicationdata$Conflict)
+replicationdata$Conflict <- ifelse(replicationdata$InternationalizedConflict==1,4,
+                                   replicationdata$Conflict)
+replicationdata$Conflict <- as.factor(replicationdata$Conflict)
+
+########################################################################################
+#### VARIABLE: PRE CONFLICT TENURE #####################################################
+########################################################################################
+library(zoo)
+replicationdata$StartDate21 <- na.aggregate(replicationdata$StartDate2,
+                                            by=replicationdata$obsid)
+#
+replicationdata$preconftenure <- ifelse(
+  as.Date(as.character(replicationdata$StartDate21,format="%Y-%m-%d")) <=
+    as.Date(as.character(replicationdata$enddate,format="%Y-%m-%d")),
+  as.Date(as.character(replicationdata$StartDate21,format="%Y-%m-%d"))
+  - as.Date(as.character(replicationdata$startdate,format="%Y-%m-%d")),NA)
+#Code to years
+replicationdata$preconftenure <- as.numeric(replicationdata$preconftenure)
+replicationdata$preconftenure <- replicationdata$preconftenure/365.25
+hist(replicationdata$preconftenure)
+detach("package:zoo", unload=TRUE)
+
+#########################################################################################
+#### VARIABLES: STARTING DECADE ########################################################
+########################################################################################
+replicationdata$decade<- cut(replicationdata$yearstart, 
+                             breaks=c(1940,1950, 1960, 1970, 1980,1990,2000,2010,2020), labels =F)
+
+########################################################################################
+#### VARIABLES: THE Banks datset Domestic variables ####################################
+########################################################################################
+replicationdata$domestic2[is.na(replicationdata$domestic2)] <- 0
+
+### LAG Domestic one year ##
+library(dplyr)
+replicationdata  <- 
+  replicationdata %>%
+  group_by(ccode) %>%
+  mutate(domestic2lag = lag(domestic2, 1))
+
+########################################################################################
+#### VARIABLE: THE SELECTORATE THEORY ##################################################
+########################################################################################
+
+##################################
+## THE WINNING COALITION SIZE ###
+################################
+#Banks polit02
+replicationdata$polit02[is.na(replicationdata$polit02)] <- 0
+replicationdata$W1 <- replicationdata$polit02==1
+replicationdata$W1 <- (replicationdata$W1*1)
+# PolityIV XRCOMP
+replicationdata$W2 <- replicationdata$xrcomp>=2
+replicationdata$W2 <- (replicationdata$W2*1) 
+# PolityIV XROPEN
+replicationdata$W3 <- replicationdata$xropen>2
+replicationdata$W3 <- (replicationdata$W3*1)
+# PolityIV PARCOMP
+replicationdata$W4 <- replicationdata$parcomp==5
+replicationdata$W4 <- (replicationdata$W4*1)
+# Make Wsize variable
+replicationdata$Wsize <- (replicationdata$W1 + replicationdata$W2 + 
+                            replicationdata$W3 + replicationdata$W4)
+replicationdata$Wsizefactor <- as.factor(replicationdata$Wsize)
+replicationdata$Wsize <- replicationdata$Wsize/4 # Between [0,1]
+summary(replicationdata$Wsizefactor)
+replicationdata$Wsize0 <- ifelse(replicationdata$Wsizefactor==0,1,0)
+replicationdata$Wsize0.25 <- ifelse(replicationdata$Wsizefactor==1,1,0)
+replicationdata$Wsize0.50 <- ifelse(replicationdata$Wsizefactor==2,1,0)
+replicationdata$Wsize0.75 <- ifelse(replicationdata$Wsizefactor==3,1,0)
+replicationdata$Wsize1 <- ifelse(replicationdata$Wsizefactor==4,1,0)
+
+##############################
+## SIZE OF THE SELECTORATE ##
+############################
+# Banks legis03 = Effectiveness of Legislature
+detach("package:Amelia", unload=TRUE)
+library(Amelia)
+#### ID TO ROWNUMBER ####
+library(plyr)
+replicationdata$id2 <- id(replicationdata)
+detach("package:plyr", unload=TRUE)
+imputate <- subset(replicationdata, select=c("year","ccode","legis03",
+                                             "polity2", "xrreg",
+                                             "xrcomp", "xropen", "parcomp","id2", 
+                                             "polit09"))
+Legis03Imputated <- amelia(x=imputate, m=20,p2s=1,cs="ccode",ts="year")
+## WAIT ##
+setwd("/Users/kristopher/Desktop/MasterUiO/Masteroppgave/Datasett/Replication/Imputated")
+write.amelia(Legis03Imputated, separate = TRUE, file.stem="ImputatedDF",
+             format="csv")
+## WAIT ##
+AmeliaLegis03DF <- read.csv("ImputatedDF20.csv", header=T, sep=",", dec=".")
+AmeliaLegis03DF$legis03imputated <- AmeliaLegis03DF$legis03
+Legis03 <- subset(AmeliaLegis03DF, select=c("year","ccode","legis03imputated","id2"))
+Legis03$legis03imputated <- as.numeric(Legis03$legis03imputated)
+#VALUES >3==3, VALUES<0==0
+Legis03$final <- Legis03$legis03imputated
+Legis03$final <- ifelse(Legis03$final>=3,3,Legis03$legis03imputated)
+Legis03$final <- ifelse(Legis03$final<=0,0,Legis03$final)
+Legis03$legis03imp <- Legis03$final
+Legis03 <- subset(Legis03, select=c("year","legis03imp","id2"))
+#Code to 0,1,2,3
+Legis03$legis03imp <- round(Legis03$legis03imp,digits=0)
+write.csv(Legis03, file="Legis03.csv")
+
+#######################################################################################
+#MERGE IMPUTATED LEGIS03 to replicationdata
+library(dplyr)
+test <- merge(replicationdata, Legis03, by=c("id2","year"), all.x=TRUE)
+summary(test$legis03imp)
+replicationdata <- test
+detach("package:dplyr", unload=TRUE)
+
+#### CODE Selectorate Size into 0:1
+replicationdata$Ssize <- replicationdata$legis03  / 3  # Between [0,1]
+replicationdata$Ssize <- round(replicationdata$Ssize,digits=2)
+replicationdata$Ssizeimp <- replicationdata$legis03imp / 3 # Between [0,1] Imputated
+replicationdata$Ssizeimp <- round(replicationdata$Ssizeimp,digits=2)
+replicationdata$Ssizefactor <- as.factor(replicationdata$Ssize)
+replicationdata$Ssizeimpfactor <- as.factor(replicationdata$Ssizeimp)
+#######################################################################################
+replicationdata$Ssizeimpfactor0 <- ifelse(replicationdata$Ssizeimpfactor==0,1,0)
+replicationdata$Ssizeimpfactor0.33 <- ifelse(replicationdata$Ssizeimpfactor==0.33,1,0)
+replicationdata$Ssizeimpfactor0.67 <- ifelse(replicationdata$Ssizeimpfactor==0.67,1,0)
+replicationdata$Ssizeimpfactor1 <- ifelse(replicationdata$Ssizeimpfactor==1,1,0)
+summary(replicationdata$Ssize) #NA=2025
+summary(replicationdata$Ssizeimpfactor) #NA=0
+hist(replicationdata$Ssize) 
+hist(replicationdata$Ssizeimp) 
+
+#########################################################################################
+#### CODING WEEKS (2014) THEORY #########################################################
+#########################################################################################
+setwd("/Users/kristopher/Desktop/MasterUiO/Masteroppgave/Datasett/Replication")
+Weeks3 <- read.dta("Chapter3-MIDOutcomes.dta")
+Weeks3 <- subset(Weeks3, select = c(ccode, year,machine_a, junta_a, boss_a, strongman_a))
+#Merge with polityIV
+Weeks3 <- subset(Weeks3, year>1945) # Remove years before 1946
+detach("package:dplyr", unload=TRUE)
+library(plyr)
+Weeks3 <- rename(Weeks3, c("ccode"="ccode",
+                           "year"="year",
+                           "machine_a"="JW_Machine",
+                           "junta_a"="JW_Junta",
+                           "boss_a"="JW_Boss", 
+                           "strongman_a"="JW_Strongman"))
+#Weeks3 missing values == 0
+Weeks3[is.na(Weeks3)] <- 0
+# Create factorial Jessica Weeks regime type variable == JW_Type
+for (i in 1:nrow(Weeks3)) 
+{ if(Weeks3$JW_Machine[i]==1)   {Weeks3$JW_Type[i] <- 1}
+  else  if(Weeks3$JW_Junta[i]==1)     {Weeks3$JW_Type[i] <- 2} 
+  else  if(Weeks3$JW_Boss[i]==1)      {Weeks3$JW_Type[i] <- 3} 
+  else  if(Weeks3$JW_Strongman[i]==1) {Weeks3$JW_Type[i] <- 4} 
+  else  if(Weeks3$JW_Machine[i] +
+           Weeks3$JW_Junta[i]    + Weeks3$JW_Boss[i]    +
+           Weeks3$JW_Strongman[i] ==0) {Weeks3$JW_Type[i] <- NA} } #
+Weeks3$JW_Type <- as.factor(Weeks3$JW_Type)
+#An error with Weeks dataset, many duplicated rows.
+Weeks3 <- Weeks3[!duplicated(Weeks3),] #Weeks3 = 2118 observations
+Weeks3$JW_StrongmanDummy <- ifelse(Weeks3$JW_Strongman==1,1,0)
+Weeks3$JW_BossDummy <- ifelse(Weeks3$JW_Boss==1,1,0)
+#### Import GWF (2014) ####
+GWF <- read.dta("GWF_AllPoliticalRegimes.dta")
+GWF$ccode <- GWF$cowcode
+GWF <- subset(GWF, select = c(ccode, year, gwf_country, gwf_duration, gwf_party, 
+                              gwf_military, gwf_monarchy, gwf_personal, gwf_fail))
+# GWF Regimetype as a factorial variable == GWF_Type
+for (i in 1:nrow(GWF)) 
+{ if(GWF$gwf_party[i]==1)    {GWF$GWF_Type[i] <- 1 }
+  else  if(GWF$gwf_military[i]==1) {GWF$GWF_Type[i] <- 2 } 
+  else  if(GWF$gwf_monarchy[i]==1) {GWF$GWF_Type[i] <- 3 } 
+  else  if(GWF$gwf_personal[i]==1) {GWF$GWF_Type[i] <- 4 } 
+  else  if(GWF$gwf_fail[i]==1)     {GWF$GWF_Type[i] <- 5 } 
+  else  if (GWF$gwf_military[i] + 
+            GWF$gwf_monarchy[i] +
+            GWF$gwf_personal[i]  + 
+            GWF$gwf_fail[i] == 0)  {GWF$GWF_Type[i] <- 0 }
+  else GWF$GWF_Type[i]<- "NA"}
+GWF$GWF_Type <- as.factor(GWF$GWF_Type)
+library(plyr)
+GWF <- rename(GWF, c("gwf_party"="GWF_Party",
+                     "gwf_military"="GWF_Military",
+                     "gwf_monarchy"="GWF_Monarchy",
+                     "gwf_personal"="GWF_Personal",
+                     "gwf_fail"="GWF_Failed"))
+
+#Merge Weeks regimes and GWF regimes
+GWFandJW <- merge(GWF,Weeks3, by=c("ccode", "year"),all=T)
+GWFandJW <- subset(GWFandJW, select=c(ccode, year, gwf_duration,
+                                      GWF_Party, GWF_Military, GWF_Monarchy,
+                                      GWF_Personal, GWF_Failed, GWF_Type,
+                                      JW_Machine, JW_Junta, JW_Boss, JW_Strongman, 
+                                      JW_Type,JW_StrongmanDummy,JW_BossDummy))
+#Recode to numeric variables, from interg class. To cor() later
+GWFJW <- subset(GWFandJW, select=c(ccode, year, gwf_duration,
+                                   GWF_Party, GWF_Military, GWF_Monarchy,
+                                   GWF_Personal, GWF_Failed,
+                                   JW_Machine, JW_Junta,
+                                   JW_Boss, JW_Strongman))
+GWFJW$ccode        <- as.numeric(GWFJW$ccode) 
+GWFJW$year         <- as.numeric(GWFJW$year)
+GWFJW$gwf_duration <- as.numeric(GWFJW$gwf_duration) 
+GWFJW$GWF_Party    <- as.numeric(GWFandJW$GWF_Party) 
+GWFJW$GWF_Military <- as.numeric(GWFandJW$GWF_Military)
+GWFJW$GWF_Monarchy <- as.numeric(GWFandJW$GWF_Monarchy ) 
+GWFJW$GWF_Personal <- as.numeric(GWFandJW$GWF_Personal)
+GWFJW$GWF_Failed   <- as.numeric(GWFandJW$GWF_Failed)
+GWFJW$JW_Machine   <- as.numeric(GWFJW$JW_Machine)
+GWFJW$JW_Junta     <- as.numeric(GWFJW$JW_Junta)
+GWFJW$JW_Boss      <- as.numeric(GWFJW$JW_Boss)
+GWFJW$JW_Strongman <- as.numeric(GWFJW$JW_Strongman)
+
+#########################################################################################
+#### MERGE GWF, JW and replicationdataset, 9706 country years ##########################
+library(dplyr)
+replicationdata <- merge(replicationdata, GWFandJW, by=c("ccode", "year"), all.x=TRUE)
+detach("package:dplyr", unload=TRUE)
+
+#### Group JW_TYPE to leaders ####
+#### JW_TYPE MACHINE####
+replicationdata$JW_Machine <- ifelse(replicationdata$JW_Machine==0,NA,
+                                     replicationdata$JW_Machine)
+replicationdata$JW_Strongman <- ifelse(replicationdata$JW_Strongman==0,NA,
+                                       replicationdata$JW_Strongman)
+replicationdata$JW_Boss <- ifelse(replicationdata$JW_Boss==0,NA,
+                                  replicationdata$JW_Boss)
+replicationdata$JW_Junta <- ifelse(replicationdata$JW_Junta==0,NA,
+                                   replicationdata$JW_Junta)
+
+test <- replicationdata
+#### IF LEADER ONCE A JW_TYPE = ALWAYS A JW_TYPE ####
+library(zoo)
+#MACHINE
+replicationdata$JW_Machine <- na.aggregate(
+  replicationdata$JW_Machine,by=test$id)
+replicationdata$JW_Machine[is.na(
+  replicationdata$JW_Machine)] <- 0
+#STRONGMAN
+replicationdata$JW_Strongman <- na.aggregate(
+  replicationdata$JW_Strongman,by=test$id)
+replicationdata$JW_Strongman[is.na(
+  replicationdata$JW_Strongman)] <- 0
+#BOSS
+replicationdata$JW_Boss <- na.aggregate(
+  replicationdata$JW_Boss,by=test$id)
+replicationdata$JW_Boss[is.na(
+  replicationdata$JW_Boss)] <- 0
+#JUNTA
+replicationdata$JW_Junta <- na.aggregate(
+  replicationdata$JW_Junta,by=test$id)
+replicationdata$JW_Junta[is.na(
+  replicationdata$JW_Junta)] <- 0
+detach("package:zoo", unload=TRUE)
+
+#########################################################################################
+#### SUBSET LEADERS WITH STARTDATE > 2014-12-31
+for (i in 1:nrow(replicationdata)) 
+{if(replicationdata$startdate[i]> "2014-12-31")  {replicationdata$trunc1[i]<- 0} 
+  else if(replicationdata$startdate[i]< "2014-12-31")   {replicationdata$trunc1[i]<- 1} }
+
+#########################################################################################
+### IMPORT DATA ON TERMLIMITS ####
+termlimits <- read.csv("TermLimit.csv",header=T,sep=";")
+replicationdata <- merge(replicationdata,termlimits, by=c("obsid"),all.x=T)
+replicationdata <- replicationdata[!duplicated(replicationdata),] 
+replicationdata$TermCens <- as.factor(replicationdata$TermCens)
+
+#########################################################################################
+#### Censoring variable ####
+#Archigos Exit variabel, numeric censoring variable
+replicationdata$exitnum <- as.numeric(replicationdata$exit)
+for (i in 1:nrow(replicationdata)) 
+{if(replicationdata$exitnum[i]==1) {replicationdata$cens2[i]<- 1} 
+  #Foreign intervention
+  else if(replicationdata$exitnum[i]==2) {replicationdata$cens2[i]<- 1} 
+  #Irregular exit
+  else if(replicationdata$exitnum[i]==3) {replicationdata$cens2[i]<- 3} 
+  #Natural death
+  else if(replicationdata$exitnum[i]==4) {replicationdata$cens2[i]<- 1} 
+  #Regular exit
+  else if (replicationdata$exitnum[i]==5) {replicationdata$cens2[i]<- 1} 
+  #Retired Due to Ill Health 
+  else if (replicationdata$exitnum[i]==6) {replicationdata$cens2[i]<- 2} 
+  #Still in Office
+  else if (replicationdata$exitnum[i]==7) {replicationdata$cens2[i]<- 3} 
+  #Suicide
+  else if (replicationdata$exitnum[i]==8) {replicationdata$cens2[i]<- 1}} #Unknown
+
+#### TERM LIMIT ####
+replicationdata$cens2 <- ifelse(replicationdata$TermCens==1,4,replicationdata$cens2)
+replicationdata$cens2 <- as.factor(replicationdata$cens2)
+#### CENSORING: 1=NO; 2=Still in Office; 3=Natural death; 4=Term Limit #################
+########################################################################################
+
+#### EVENT INDICATOR ####
+replicationdata$Event <- replicationdata$leave #0=Right Censored;1=Event
+replicationdata$Event <- ifelse(replicationdata$enddate=="2014-12-31",0,replicationdata$Event)
+replicationdata$Event <- ifelse(replicationdata$startdate<"1946-01-01",2,replicationdata$Event)
+replicationdata$Event <- ifelse(replicationdata$TermCens==1,0,replicationdata$Event)
+
+#########################################################################################
+#### EXPORT DATASET #####################################################################
+#########################################################################################
+write.csv(replicationdata, file="replicationdata.csv") #N=9544
+
+
+#########################################################################################
+### Part 2 ##############################################################################
+#################### MODELS #############################################################
+#########################################################################################
+#########################################################################################
+library(survival)
+library(mgcv)
+
+#### IMPUTATION TEST MODELL #############################################################
+#########################################################################################
+
+MODELST1 <- coxph(Surv(Time1, Time2, Event) ~
+                    Wsizefactor + Ssizefactor
+                  +ExtrasystemicConflict + InterstateConflict
+                  +InternalConflict+InternationalizedConflict
+                  +cluster(id)
+                  ,data=replicationdata)
+MODELST2 <- coxph(Surv(Time1, Time2, Event) ~
+                    Wsizefactor + Ssizefactor
+                  +ExtrasystemicConflict + InterstateConflict
+                  +InternalConflict+InternationalizedConflict
+                  +GDPpcST + ecogrowth + taxation + log(pop1) + log(startage)
+                  +cluster(id)
+                  ,data=replicationdata)
+MODELST1imp <- coxph(Surv(Time1, Time2, Event) ~
+                       Wsizefactor + Ssizeimpfactor
+                     +ExtrasystemicConflict + InterstateConflict
+                     +InternalConflict+InternationalizedConflict
+                     +cluster(id)
+                     ,data=replicationdata)
+MODELST2imp <- coxph(Surv(Time1, Time2, Event) ~
+                       Wsizefactor + Ssizeimpfactor
+                     +ExtrasystemicConflict + InterstateConflict
+                     +InternalConflict+InternationalizedConflict
+                     +GDPpcST + ecogrowth + taxation + log(pop1) + log(startage)
+                     +cluster(id)
+                     ,data=replicationdata)
+
+#### Hypothesis 1 ############################################################################
+#########################################################################################
+Model1 <- coxph(Surv(Time1, Time2, Event) ~ 
+                  +Wsizefactor*Ssizeimpfactor
+                +cluster(id), data=replicationdata)
+summary(Model1)
+Model2 <- coxph(Surv(Time1, Time2, Event) ~ 
+                  +Wsizefactor*Ssizeimpfactor
+                +TypeOfConflictEx+TypeOfConflictstate
+                +TypeOfConflictinternal+TypeOfConflictinternationalized
+                +cluster(id), data=replicationdata)
+summary(Model2)
+Model3 <- coxph(Surv(Time1, Time2, Event) ~ 
+                  +Wsizefactor*Ssizeimpfactor
+                +TypeOfConflictEx+TypeOfConflictstate
+                +TypeOfConflictinternal+TypeOfConflictinternationalized
+                +as.factor(IntensityLevel)
+                +cluster(id), data=replicationdata) 
+summary(Model3)
+Model4 <- coxph(Surv(Time1, Time2, Event) ~ 
+                  +Wsizefactor*Ssizeimpfactor
+                +TypeOfConflictEx+TypeOfConflictstate
+                +TypeOfConflictinternal+TypeOfConflictinternationalized
+                +as.factor(IntensityLevel)
+                +tt(GDPpcST)+ecogrowth + log(pop1)
+                +cluster(id), data=replicationdata)   
+summary(Model4)
+Model5 <- coxph(Surv(Time1, Time2, Event) ~ 
+                  +Wsizefactor*Ssizeimpfactor
+                +TypeOfConflictEx+TypeOfConflictstate
+                +TypeOfConflictinternal+TypeOfConflictinternationalized
+                +as.factor(IntensityLevel)
+                +tt(GDPpcST)+ecogrowth + log(pop1) +as.factor(decade)
+                +domestic2+domestic2lag
+                +cluster(id), data=replicationdata)  
+summary(Model5)
+Model6 <- coxph(Surv(Time1, Time2, Event) ~ 
+                  Wsizefactor*Ssizeimpfactor
+                +Ssizeimpfactor*Time2
+                +TypeOfConflict
+                +IntensityLevel1+IntensityLevel2+
+                  +tt(GDPpcST)+ecogrowth + log(pop1) +as.factor(decade)
+                +domestic2+domestic2lag
+                +gender +pspline(startage, df = 3)
+                +IrregularEntry 
+                +prevtimesinoffice 
+                +cluster(id)
+                , data=replicationdata)
+summary(Model6)
+
+##### RESULTS HYPOTESIS 2 ###############################################################
+#########################################################################################
+
+HYP2Model1 <- coxph(Surv(Time1, Time2, Event) ~ 
+                      JW_Boss+JW_Strongman
+                    +cluster(id), data=replicationdata)
+HYP2Model2 <- coxph(Surv(Time1, Time2, Event) ~ 
+                      (JW_Boss+JW_Strongman)*TypeOfConflict
+                    +cluster(id), data=replicationdata)
+HYP2Model3 <- coxph(Surv(Time1, Time2, Event) ~ 
+                      (JW_Boss+JW_Strongman)*TypeOfConflict
+                    +as.factor(IntensityLevel)
+                    +cluster(id), data=replicationdata)          
+HYP2Model4 <- coxph(Surv(Time1, Time2, Event) ~ 
+                      (JW_Boss+JW_Strongman)*TypeOfConflict
+                    +as.factor(IntensityLevel)
+                    +tt(GDPpcST)+ecogrowth + log(pop1)
+                    +cluster(id), data=replicationdata)        
+HYP2Model5 <- coxph(Surv(Time1, Time2, Event) ~ 
+                      (JW_Boss+JW_Strongman)*TypeOfConflict
+                    +IntensityLevel1+IntensityLevel2+
+                      +tt(GDPpcST)+ecogrowth + log(pop1) +as.factor(decade)
+                    +domestic2+domestic2lag
+                    +gender +pspline(startage, df = 3)
+                    +IrregularEntry + prevtimesinoffice 
+                    +cluster(id), data=replicationdata) 
+HYP2Model6 <- coxph(Surv(Time1, Time2, Event) ~ 
+                      (JW_Boss+JW_Strongman+JW_Junta+JW_Machine)*(+TypeOfConflictEx+
+                     TypeOfConflictstate+TypeOfConflictinternal+ 
+                     TypeOfConflictinternationalized)
+                    +IntensityLevel1+IntensityLevel2 
+                    +gender
+                    +ecogrowth+tt(GDPpcST)
+                    +domestic2+domestic2lag 
+                    +log(pop1)
+                    +as.factor(decade)
+                    +cluster(id), data=replicationdata) 
+summary(HYP2Model1)
+summary(HYP2Model2) 
+summary(HYP2Model3)
+summary(HYP2Model4)
+summary(HYP2Model5)
+summary(HYP2Model6)
+
+##### Subset of sample ##################################################################
+#########################################################################################
+#### Hypothesis 1
+#<5 years
+Model6sub1 <- coxph(Surv(Time1, Time2, Event) ~ 
+                      Wsizefactor*Ssizeimpfactor
+                    +Ssizeimpfactor*Time2
+                    +TypeOfConflict
+                    +IntensityLevel1+IntensityLevel2+
+                      +tt(GDPpcST)+ecogrowth + log(pop1) +as.factor(decade)
+                    +domestic2+domestic2lag
+                    +gender +pspline(startage, df = 3)
+                    +IrregularEntry 
+                    +prevtimesinoffice 
+                    +cluster(id)
+                    , data=replicationdata,subset=years<5)
+#<5 years>10 years
+Model6sub2 <- coxph(Surv(Time1, Time2, Event) ~ 
+                      Wsizefactor*Ssizeimpfactor
+                    +Ssizeimpfactor*Time2
+                    +TypeOfConflict
+                    +IntensityLevel1+IntensityLevel2+
+                      +tt(GDPpcST)+ecogrowth + log(pop1) +as.factor(decade)
+                    +domestic2+domestic2lag
+                    +gender +pspline(startage, df = 3)
+                    +IrregularEntry 
+                    +prevtimesinoffice 
+                    +cluster(id)
+                    , data=replicationdata,subset=years>5&years<10)
+#>10years
+Model6sub3 <- coxph(Surv(Time1, Time2, Event) ~ 
+                      Wsizefactor*Ssizeimpfactor
+                    +Ssizeimpfactor*Time2
+                    +TypeOfConflict
+                    +IntensityLevel1+IntensityLevel2+
+                      +tt(GDPpcST)+ecogrowth + log(pop1) +as.factor(decade)
+                    +domestic2+domestic2lag
+                    +gender +pspline(startage, df = 3)
+                    +IrregularEntry 
+                    +prevtimesinoffice 
+                    +cluster(id)
+                    , data=replicationdata,subset=years>10) 
+#### Hypothesis 2 ####
+#<5 years
+HYP2Model6sub1 <- coxph(Surv(Time1, Time2, Event) ~ 
+                          (JW_Boss+JW_Strongman+JW_Machine+JW_Junta)*(+TypeOfConflictEx+
+                          TypeOfConflictstate+TypeOfConflictinternal+ 
+                          TypeOfConflictinternationalized)
+                        +IntensityLevel1+IntensityLevel2 
+                        +gender
+                        +ecogrowth+tt(GDPpcST)
+                        +domestic2+domestic2lag 
+                        +log(pop1)
+                        +as.factor(decade)
+                        +cluster(id), data=replicationdata,subset=years<5) 
+#>5 years & <10 years
+HYP2Model6sub2 <- coxph(Surv(Time1, Time2, Event) ~ 
+                          (JW_Boss+JW_Strongman+JW_Machine+JW_Junta)*(+TypeOfConflictEx+
+                         TypeOfConflictstate+TypeOfConflictinternal+ 
+                         TypeOfConflictinternationalized)
+                        +IntensityLevel1+IntensityLevel2 
+                        +gender
+                        +ecogrowth+tt(GDPpcST)
+                        +domestic2+domestic2lag 
+                        +log(pop1)
+                        +as.factor(decade)
+                        +cluster(id), data=replicationdata,subset=years>5&years<10) 
+#<5 years
+HYP2Model6sub3 <- coxph(Surv(Time1, Time2, Event) ~ 
+                          (JW_Boss+JW_Strongman+JW_Machine+JW_Junta)*(+TypeOfConflictEx+
+                          TypeOfConflictstate+TypeOfConflictinternal+ 
+                          TypeOfConflictinternationalized)
+                        +IntensityLevel1+IntensityLevel2 
+                        +gender
+                        +ecogrowth+tt(GDPpcST)
+                        +domestic2+domestic2lag 
+                        +log(pop1)
+                        +as.factor(decade)
+                        +cluster(id), data=replicationdata,subset=years>10) 
+
+##### Residual tests ####################################################################
+#########################################################################################
+
+#DEVIANCE RESIDUALS
+dev.res <- resid(Model6, type = "deviance") 
+plot(dev.res,main="Deviance Residuals",sub="Hypothesis 1",
+     xlab="Observation Number",ylab="Residuals") #File= DevResHyp1
+head(dev.res)
+tail(dev.res)
+
+dev.res1 <- resid(HYP2Model6, type = "deviance") 
+plot(dev.res1,main="Deviance Residuals",sub="Hypothesis 2",
+     xlab="Observation Number",ylab="Residuals") #file= DevResHyp2
+head(dev.res1)
+tail(dev.res1)
+
+#SCORE RESIDUALS HYPOTHESIS 1
+scoreRes1 <- residuals(Model6, type = "dfbeta")
+par(mfrow=c(2, 5))
+plot(scoreRes1[,1],type="h",ylab=" ", xlab= " Wsize0",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes1[,2],type="h",ylab=" ", xlab= " Wsize0.25",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes1[,3],type="h",ylab=" ", xlab= " Wsize0.5",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes1[,4],type="h",ylab=" ", xlab= " Wsize0.75",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes1[,5],type="h",ylab=" ", xlab= " Wsize1",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes1[,6],type="h",ylab=" ", xlab= " Ssize0",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes1[,7],type="h",ylab=" ", xlab= " Ssize0.33",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes1[,8],type="h",ylab=" ", xlab= " Ssize0.67",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes1[,9],type="h",ylab=" ", xlab= " Ssize1",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes1[,18],type="h",ylab=" ", xlab= " GDP Change",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)  #File = ScoreRes1
+
+#SCORE RESIDUALS
+scoreRes2 <- residuals(HYP2Model6, type = "dfbeta")
+par(mfrow=c(2, 5))
+plot(scoreRes2[,1],type="h",ylab=" ", xlab= "JW(2014) Boss",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes2[,2],type="h",ylab=" ", xlab= "JW(2014) S.Man",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes2[,3],type="h",ylab=" ", xlab= "Extrastate",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes2[,4],type="h",ylab=" ", xlab= "Interstate",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes2[,5],type="h",ylab=" ", xlab= "Intrastate",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes2[,6],type="h",ylab=" ", xlab= "Int.lized",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes2[,7],type="h",ylab=" ", xlab= "Int. Level 1",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes2[,9],type="h",ylab=" ", xlab= "Gender:Man",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes2[,10],type="h",ylab=" ", xlab= "GDP Change",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2)
+plot(scoreRes2[,12],type="h",ylab=" ", xlab= "Domestic 2",xaxt='n')
+abline(h=0, col="#51b0f3",lwd=2) #File = ScoreRes2
+
+#### MODEL: ONLY WAR  ###################################################################
+#########################################################################################
+HYP1WAR <- coxph(Surv(Time1, Time2, Event) ~ 
+                   Wsizefactor*Ssizeimpfactor
+                 +Ssizeimpfactor*Time2
+                 +TypeOfConflictstate+TypeOfConflictinternal+ 
+                   TypeOfConflictinternationalized
+                 +IntensityLevel1+IntensityLevel2+
+                   +tt(GDPpcST)+ecogrowth + log(pop1) +as.factor(decade)
+                 +domestic2+domestic2lag
+                 +gender +pspline(startage, df = 3)
+                 +IrregularEntry +prevtimesinoffice 
+                 +pspline(preconftenure, df=3)
+                 +cluster(id)
+                 , data=replicationdata)        
+
+HYP2WAR <- coxph(Surv(Time1, Time2, Event) ~ 
+                   (JW_Boss+JW_Strongman+JW_Machine+JW_Junta)*(+
+                    TypeOfConflictstate+TypeOfConflictinternal+ 
+                    TypeOfConflictinternationalized)
+                 +IntensityLevel1+IntensityLevel2 
+                 +gender
+                 +ecogrowth+tt(GDPpcST)
+                 +domestic2+domestic2lag 
+                 +log(pop1)
+                 +as.factor(decade)
+                 +pspline(preconftenure, df=3)
+                 +cluster(id) , data=replicationdata) 
+
+#########################################################################################
+## Part 3 ###############################################################################
+############################## FIGURES ##################################################
+#########################################################################################
+library(ggplot2)
+# SUBRACT THE YEAR POLITICAL LEADER LEFT OFFICE 
+LeftOffice <- subset(replicationdata, leave==1) #N=2052
+LeftOffice$yearsfloor <- floor(LeftOffice$years)
+summary(LeftOffice$yearsfloor<2)
+
+#### FIGURE 3: Correlation matrix: Starting age, duration and Polity Value ##############
+#########################################################################################
+DurStartAgePolity <- subset(LeftOffice, select=c(startage, Duration,polity2,Wsize))
+DurStartAgePolity$startage <- cut(DurStartAgePolity$startage, 
+                                  breaks=c(0,29.9,60,110), labels=F)
+DurStartAgePolity$polity2 <- cut(DurStartAgePolity$polity2, 
+                                 breaks=c(-100,-5.1,0.1, 4.9,7.9,100), 
+                                 labels=F)
+StartAgePolityDurationplot <- ggplot(DurStartAgePolity,aes(polity2,startage,fill=Duration)) +
+  geom_raster(interpolate =F)+
+  scale_fill_gradient(low="#074776",high="#bce0fb")+
+  # scale_x_continuous(labels=c("a","(-10)-(-6)","(-5)-0","1-4","5-7","8-10","b"))+
+  scale_y_continuous(labels=c("a","0-29","30-60",">60","b"))+
+  labs(title="Duration for Political Leaders: Dependent on Age and PolityIV",
+       y="Start Age",x="PolityIV Value") +
+  theme_bw()
+StartAgePolityDurationplot #file=DurStartagePolity
+
+#### FIGURE 4: Total Duration for Political Leaders: 1946-2014 ##########################
+#########################################################################################
+leaderduration <- ggplot(LeftOffice, aes(yearsfloor, fill=factor(cens2))) +
+  geom_histogram(binwidth=1) +
+  labs(title="Total Duration for Political Leaders: 1946-2014") +
+  labs(x="Number of Years", y="Counts") +
+  scale_fill_manual(values = c("#0b69ae","#97cff9", "#f3883a","black"),
+                    name="Censoring",
+                    breaks=c("1","2","3","4"),
+                    labels=c("Uncensored", "Still In Office", "Natural Death","Term Limit")) +
+  scale_y_continuous(breaks=c(100, 200,300, 400,500,600,700,800)) +
+  annotate("text", x = 40, y = 700, label = "N=2026") +
+  annotate("text", x = 40, y = 650, label = "Mean=4.545") +
+  annotate("text", x = 40, y = 600, label = "Median=2.534") +
+  theme_bw()
+leaderduration #file name = totalduration.jpeg
+summary(LeftOffice$years)
+
+#### FIGURE 5: Total Duration for Political Leaders, based on starting year #############
+#########################################################################################
+library(mgcv) # for Splines
+library(nlme)
+smoothttenure <- ggplot(LeftOffice, aes(yearstart, years)) +
+  geom_point(aes(colour=factor(cens2)), size=2) +
+  labs(title="Total Duration for Political Leaders: 1946-2014") +
+  labs(x="Starting year", y="Number of years") +
+  scale_colour_manual(values = c("#0b69ae","#97cff9", "#f3883a","black"), 
+                      name="Censoring",
+                      breaks=c("1","2","3","4"),
+                      labels=c("Uncensored", "Still In Office", "Natural Death","Term Limit")) +
+  scale_x_continuous(breaks=c(1950, 1960,1970, 1980,1990,2000,2010)) +
+  #stat_smooth(fill="blue", colour="orange", size=0.5) +
+  geom_smooth(level=0.95, method=gam, formula = y ~ splines::bs(x,4),
+              fill="#1b95f0", colour="#f0761b", size=0.8,
+              se=TRUE)+ 
+  geom_text(aes(label=(ifelse(years>40,paste(leader,idacr),""))),
+            hjust = 0.5,nudge_y=-0.6,size=4,angle =-5)+
+  theme_bw()
+smoothttenure  # file name = smoothtenure.jpeg
+
+#### FIGURE 6: X=W, Y=S, Z=PolityIV #####################################################
+#########################################################################################
+WSPOLITYDATA <- subset(replicationdata, select=c(Wsize,Ssize,Ssizeimp,polity2,year,ccode))
+WSPOLITYDATA2 <- subset(LeftOffice, select=c(Wsize,Ssize,years))
+WSPOLITYDATA <- WSPOLITYDATA[!duplicated(WSPOLITYDATA),] 
+WSPOLITYDATA2 <- WSPOLITYDATA2[!duplicated(WSPOLITYDATA2),] 
+####
+plotWSpolityIV <- ggplot(WSPOLITYDATA2, aes(Wsize, Ssize)) +
+  geom_raster(aes(fill = years), alpha=1) + #bin= c(0.1,0.1,1)
+  # stat_summary(fun = "mean",geom="text") +
+  #stat_contour() +
+  scale_fill_gradient(low="#074776",high="#bce0fb",name="Duration")+
+  labs(title="W/S - Duration in Office") +
+  scale_x_continuous(breaks=c(0,0.25,0.5,0.75,1)) +
+  scale_y_continuous(breaks=c(0,0.33,0.66,1)) +
+  theme_bw()
+plotWSpolityIV # file name = WSmotPolityIV.jpeg
+
+#### FIGURE 7 and 8: World map on Polity Value ##########################################
+#########################################################################################
+library(rworldmap)
+mapdata <- subset(replicationdata, select=c(year,Wsize,Ssize,Ssizeimp,ccode))
+library(countrycode)
+mapdata$ISO3 <- countrycode(mapdata$ccode, "cown", "iso3c") #Transform to CCode
+mapdata2014 <- subset(mapdata,year==2006) #Year ==2014
+#### FIGURE 7 ####
+newmap2014 <- getMap(resolution = "low")
+politymap2014 <- joinCountryData2Map(dF=mapdata2014,joinCode="ISO3",nameJoinColumn="ISO3")
+plotpolitymap2014 <- mapCountryData(mapToPlot=politymap2014,nameColumnToPlot="Wsize",
+                                    numCats=5, catMethod="fixedWidth",
+                                    colourPalette=c("#095388","#61b7f5","#c0dff9",
+                                                    "#f3934d","#d0600e"),
+                                    mapTitle="World Map 2006: Size Winning Coalition",
+                                    missingCountryCol="#97f9c1")  #Filename = WorldMap 
+#### FIGURE 8 ####
+newmap2014 <- getMap(resolution = "low")
+politymap2014 <- joinCountryData2Map(dF=mapdata2014,joinCode="ISO3",nameJoinColumn="ISO3")
+plotpolitymap2014 <- mapCountryData(mapToPlot=politymap2014,nameColumnToPlot="Ssize",
+                                    numCats= 4, catMethod="fixedWidth",
+                                    colourPalette=c("#095388","#61b7f5","#f3934d","#d0600e"),
+                                    mapTitle="World Map 2006: Size Selectorate",
+                                    missingCountryCol="#97f9c1")  #Filename = SWorldMap       
+
+#### FIGURE 9: Correlation matrix: Jessica Weeks and  GWF regime categories #############
+#########################################################################################
+GWFJW1 <- subset(GWFJW, select=-c(year,ccode,gwf_duration))
+CorGWFJW <- cor(GWFJW1, use = "pairwise.complete.obs", method="pearson") 
+col2 <- colorRampPalette(c("#04253e","#1692f0" ,"#f5f5f5", "#f07416", "black"))
+library(corrplot)
+corrplot(CorGWFJW, method=("color"), type="lower", 
+         col=col2(100), tl.col="black", tl.srt=45) #fil=corrmatrix1.jpeg
+detach("package:corrplot", unload=TRUE)
+
+#### FIGURE 10: UCDP/PRIO ACD Conflicttype  #############################################
+#########################################################################################
+ACDtype <- ggplot(ACD, aes(year, fill=factor(TypeOfConflict))) +
+  geom_histogram(binwidth=1) +
+  scale_fill_manual(values = c("#073e67","#0b69ae","#3ca5f2","#98cff8"), 
+                    name="Type of Conflict",
+                    breaks=c("1","2", "3","4"),
+                    labels=c("Extrastate", "Interstate", "Intrastate","Internationalized")) +
+  labs(list(title="UCDP/PRIO Armed Conflicts: 1946-2014")) +
+  xlim(1946,2014) +
+  # ylim(0,60) +
+  scale_x_continuous(breaks=c(1950,1960,1970,1980,1990,2000,2010)) +
+  theme_bw()
+ACDtype # file name = ACDconflicttype2
+
+#### FIGURE 11: ARCHIGOS 4 Age entering office  #########################################
+#########################################################################################
+startagehist <- ggplot(LeftOffice, aes(startage, fill=factor(cens2))) +
+  geom_histogram(binwidth=5) +
+  scale_x_continuous(breaks=c(10,20,30,40,50,60,70,80,90)) +
+  labs(title="Starting Age for Political Leaders") +
+  labs(x="Starting Age", y="Counts") +
+  scale_fill_manual(values = c("#095389","#97cff9","#f3883a","black"),
+                    name="Censoring",
+                    breaks=c("1","2","3","4"),
+                    labels=c("Uncensored", "Still In Office", "Natural Death","Term Limit"))+
+  annotate("text", x = 80, y = 400, label = "N=2024") +
+  annotate("text", x = 80, y = 375, label = "Mean=53.99") +
+  annotate("text", x = 80, y = 350, label = "Median=54.00") +
+  theme_bw() 
+startagehist #file= startage.jpeg
+summary(LeftOffice$startage)
+
+#### FIGURE 12ab and 13: MOSAIC PLOTS ####################################################
+#########################################################################################
+library(vcd)
+mosaicplotdata <- subset(replicationdata, select=c(Wsizefactor,Ssizeimpfactor, 
+                                                   JW_Type,Conflict))
+### GIVE NAMES TO VARIABLES:
+mosaicplotdata$Wsize <- factor(mosaicplotdata$Wsizefactor,
+                               labels=c("Wsize0","Wsize0.25", "Wsize0.5","Wsize0.75","Wsize1"))
+mosaicplotdata$Ssize <- factor(mosaicplotdata$Ssizeimpfactor,
+                               labels=c("Ssize0","Ssize0.33", "Ssize0.67","Ssize1"))
+mosaicplotdata$JW_Type <- factor(mosaicplotdata$JW_Type,
+                                 labels=c("0","JW_Machine","JW_Junta", "JW_Boss","JW_Strongman"))
+mosaicplotdata$Conflict <- factor(mosaicplotdata$Conflict,
+                                  labels=c("No Conflict","Extrasystemic","Interstate",
+                                           "Internal", "Internationalized"))
+
+Wcol=c("#095388","#61b7f5","#c0dff9","#f3934d","#d0600e")
+Scol=c("#095388","#61b7f5","#f3934d","#d0600e")
+JWcol=c("#095388","#095388","#61b7f5","#f3934d","#d0600e")
+#### FIGURE 12a ####
+mosaic(Wsize~Conflict,highlighting_fill=Wcol,data=mosaicplotdata)
+#### FIGURE 12b ####
+mosaic(Ssize~Conflict,highlighting_fill=Scol, data=mosaicplotdata)
+#### FIGURE 13 ####
+mosaic(JW_Type~Conflict,highlighting_fill=JWcol, data=mosaicplotdata,subset=JW_Type!=0)
+
+#### FIGURE 23 and 24: JW and GWF regime index on PolityIV value ########################
+#########################################################################################
+
+#### FIGURE 23: JESSICA WEEKS REGIME TYPE BOXPLOT ####
+boxplotJWtype <- ggplot(LeftOffice, aes(JW_Type, polity2)) +
+  geom_boxplot(fill="#1692f0", alpha=0.7, outlier.colour = "black", outlier.shape = 1) +
+  labs(title="JW Regimetype on Polity-IV") +
+  labs(x="Weeks(2014) Regime type", y="PolityIV Value") +
+  scale_x_discrete(labels=c("JW_Machine", "JW_Junta",
+                            "JW_Boss", "JW_Strongman","Inapplicable")) +
+  #geom_jitter(width = 0.1, alpha=0.1) +
+  stat_boxplot(geom ='errorbar', alpha=0.8)+
+  theme_bw()
+boxplotJWtype #file name = boxplotJW
+
+#### FIGURE 24: Geddes, Wright and Frantz Regime type BOXPLOT ####
+boxplotGWFtype <- ggplot(LeftOffice, aes(GWF_Type, polity2)) +
+  geom_boxplot(fill="#1692f0", alpha=0.7, outlier.colour = "black", outlier.shape = 1) +
+  labs(title="GWF Regimetype on PolityIV") +
+  labs(x="GWF regime type", y="PolityIV Value") +
+  scale_x_discrete(labels=c("Inapplicable","GWF_Party", "GWF_Military", "GWF_Monarchy",
+                            "GWF_Personal", "GWF_Failed",  "NA")) +
+  #geom_jitter(width = 0.1, alpha=0.1) +
+  stat_boxplot(geom ='errorbar', alpha=0.8)+
+  theme_bw()
+boxplotGWFtype #file name = boxplotGWF
+
+#### FIGURE 25: UCDP/PRIO ACD Conflict Intensity  #######################################
+#########################################################################################
+ACDINTplot <- ggplot(ACD, aes(year, ..count.., fill=factor(IntensityLevel))) +
+  geom_density( position = "fill",alpha=0.8) +
+  scale_fill_manual(values = c("#e86c10","#9cd1f8"), 
+                    name="Intensity level",
+                    breaks=c("1","2"),
+                    labels=c("Low", "High")) +
+  labs(list(title="UCDP/PRIO Armed Conflicts: 1946-2014, Intensity level")) +
+  labs(x="Year") +
+  xlim(1946,2014) +
+  scale_x_continuous(breaks=c(1950,1960,1970,1980,1990,2000,2010)) +
+  theme_bw()
+ACDINTplot # file name = ACDint
+
+#### FIGURE 26: PRE CONF TENURE ##########################################################
+#########################################################################################
+preconfhist <- ggplot(LeftOffice, aes(preconftenure)) +
+  geom_histogram(binwidth = 5,aes(fill=..count..)) +
+  scale_fill_continuous(low = "#053150", high = "#0a5c98")+
+  scale_x_continuous(breaks=c(-60,-40,-20,0,20,40,60)) +
+  labs(title="Pre-Conflict Tenure") +
+  labs(x="Years", y="Counts") +
+  theme_bw() 
+preconfhist #Filename= preconfhist
+
+#########################################################################################
+#########################################################################################
+#### END ################################################################################
+#########################################################################################
